@@ -36,13 +36,22 @@
   #items{display:grid;grid-template-columns:minmax(320px,44%) 1fr;gap:14px;min-height:420px}
   #tree{overflow:auto;max-height:62vh;font-size:12.5px}
   #props{overflow:auto;max-height:62vh}
-  ul.tree{list-style:none;margin:0;padding-left:14px}
-  ul.tree.root{padding-left:0}
-  li{margin:1px 0}
+  ul.tree{list-style:none;margin:0;padding-left:16px;border-left:1px dotted #333}
+  ul.tree.root{padding-left:0;border-left:0}
+  li{margin:1px 0;position:relative}
+  li::before{content:"├";position:absolute;left:-13px;color:#454b58;font-size:11px;line-height:1.7}
+  li:last-child::before{content:"└"}
+  ul.tree.root > li::before{content:""}
   .node{display:flex;align-items:center;gap:6px;padding:2px 6px;border-radius:5px;cursor:pointer}
   .node:hover{background:var(--panel2)}
   .node.sel{background:#1d3a4d;outline:1px solid #2f6d94}
   .caret{width:12px;color:var(--dim);flex:none;user-select:none;text-align:center}
+  /* 表格式列对齐：ID / 名称 / 数量 / 价值 / 子项数 */
+  .node .c1{flex:0 0 170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .node .c2{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .node .c3{flex:0 0 56px;text-align:right;color:var(--dim);font-size:11.5px}
+  .node .c4{flex:0 0 82px;text-align:right;color:var(--dim);font-size:11.5px}
+  .node .c5{flex:0 0 74px;text-align:right;color:var(--dim);font-size:11px}
   .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .tag{color:var(--dim);font-size:11px;flex:none}
   .prop{border-top:1px solid var(--line);padding:9px 0}
@@ -320,15 +329,30 @@ function renderTree(){
         renderTree();
       };
 
-      const nm = document.createElement("span");
-      nm.className = "nm";
-      nm.textContent = `${it.identifier} | ${it.name || "（无名字）"}`;
+      // 表格列：ID / 名称 / 数量 / 价值 / 子项数
+      const c1 = document.createElement("span");
+      c1.className = "c1";
+      c1.textContent = it.identifier;
+      c1.title = it.identifier;
 
-      const tg = document.createElement("span");
-      tg.className = "tag";
-      tg.textContent = `v=${it.unitValue} × ${it.unitCount}` + (hasKids ? `  (内含 ${it.childCount} 项)` : "");
+      const c2 = document.createElement("span");
+      c2.className = "c2";
+      c2.textContent = it.name || "（无名字）";
+      c2.title = it.name || "";
 
-      node.append(caret, nm, tg);
+      const c3 = document.createElement("span");
+      c3.className = "c3";
+      c3.textContent = "×" + it.unitCount;
+
+      const c4 = document.createElement("span");
+      c4.className = "c4";
+      c4.textContent = "v=" + it.unitValue;
+
+      const c5 = document.createElement("span");
+      c5.className = "c5";
+      c5.textContent = hasKids ? `📦 ${it.childCount}` : "";
+
+      node.append(caret, c1, c2, c3, c4, c5);
       node.onclick = () => { SEL = it; renderTree(); renderProps(); };
       li.appendChild(node);
 

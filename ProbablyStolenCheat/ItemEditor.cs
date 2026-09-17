@@ -305,14 +305,15 @@ internal static class ItemEditor
 
         string indent = new string(' ', depth * 2);
         string mark = isContainer ? (open ? "▼" : "▶") : "·";
-        string suffix = isContainer ? $"  （内含 {childCount} 项）" : "";
+        string suffix = isContainer ? $"  （内含 {childCount} 节点）" : "";
         string text = $"{indent}{mark} {id} | {nm} | v={item.unitValue}{suffix}";
 
         int rowId = _rows;
         b.AddButton(text, Act(() => OnItemClick(item, path, isContainer)), $"n_{rowId}");
         _rows++;
 
-        if (isContainer && open && depth < MaxDepth)
+        // 无条件下钻：children 里可能是 PixelWindow 这类中间节点，它再往下才是库存
+        if (open && depth < MaxDepth)
             RenderChildren(b, item, path + "/" + id, depth + 1);
     }
 
@@ -327,14 +328,36 @@ internal static class ItemEditor
         {
             var ch = children[i];
             if (ch == null) continue;
+            RenderNode(b, ch, childPath, depth, 0);
+        }
+    }
 
-            GameItem sub = null;
-            try { sub = ch.TryCast<GameItem>(); } catch { }
-            if (sub != null) { RenderItem(b, sub, childPath, depth); continue; }
+    /// <summary>
+    /// 递归下钻一个 GraphNodeStorage：可能是物品、库存，也可能是夹在中间的窗口节点
+    /// （PixelWindow 实现了 GraphNodeWindow 接口）。中间节点不算一层，继续往下钻，
+    /// 否则"窗口下挂库存"的物品在树里会整棵消失。
+    /// </summary>
+    private static void RenderNode(CustomUIBuilder b, GraphNodeStorage node, string path, int depth, int hops)
+    {
+        if (node == null || depth > MaxDepth || hops > 8 || _rows >= MaxRows) return;
 
-            GameInventory subInv = null;
-            try { subInv = ch.TryCast<GameInventory>(); } catch { }
-            if (subInv != null) RenderInventory(b, subInv, childPath, depth);
+        GameItem item = null;
+        try { item = node.TryCast<GameItem>(); } catch { }
+        if (item != null) { RenderItem(b, item, path, depth); return; }
+
+        GameInventory inv = null;
+        try { inv = node.TryCast<GameInventory>(); } catch { }
+        if (inv != null) { RenderInventory(b, inv, path, depth); return; }
+
+        Il2CppSystem.Collections.Generic.List<GraphNodeStorage> children;
+        try { children = node.children; } catch { return; }
+        if (children == null) return;
+
+        for (int i = 0; i < children.Count && _rows < MaxRows; i++)
+        {
+            var ch = children[i];
+            if (ch == null) continue;
+            RenderNode(b, ch, path, depth, hops + 1);
         }
     }
 
@@ -659,6 +682,8 @@ internal static class ItemEditor
 
         if (depth >= MaxDepth) return;
 
+        // 物品的容器藏在 child(GraphNodeWindow，实际实现是 PixelWindow) 下面，
+        // 所以必须对 GraphNodeStorage 递归下钻：节点可能是物品、库存，也可能是夹在中间的窗口。
         Il2CppSystem.Collections.Generic.List<GraphNodeStorage> children;
         try { children = item.children; } catch { return; }
         if (children == null) return;
@@ -667,14 +692,36 @@ internal static class ItemEditor
         {
             var ch = children[i];
             if (ch == null) continue;
+            WalkNode(ch, seen, depth + 1, act, 0);
+        }
+    }
 
-            GameItem sub = null;
-            try { sub = ch.TryCast<GameItem>(); } catch { }
-            if (sub != null) { WalkItem(sub, seen, depth + 1, act); continue; }
+    /// <summary>
+    /// 递归下钻一个 GraphNodeStorage。关键点：既不是物品也不是库存的节点（一般是 PixelWindow
+    /// 这类中间窗口）不算一层，继续往下钻——否则物品里的容器会被整棵丢掉。
+    /// </summary>
+    private static void WalkNode(GraphNodeStorage node, System.Collections.Generic.HashSet<int> seen, int depth, Action<GameItem> act, int hops)
+    {
+        if (node == null || depth > MaxDepth || hops > 8) return;
 
-            GameInventory subInv = null;
-            try { subInv = ch.TryCast<GameInventory>(); } catch { }
-            if (subInv != null) WalkInventory(subInv, seen, depth + 1, act);
+        GameItem item = null;
+        try { item = node.TryCast<GameItem>(); } catch { }
+        if (item != null) { WalkItem(item, seen, depth, act); return; }
+
+        GameInventory inv = null;
+        try { inv = node.TryCast<GameInventory>(); } catch { }
+        if (inv != null) { WalkInventory(inv, seen, depth, act); return; }
+
+        // 中间节点：不涨 depth，只涨 hops（防环）
+        Il2CppSystem.Collections.Generic.List<GraphNodeStorage> children;
+        try { children = node.children; } catch { return; }
+        if (children == null) return;
+
+        for (int i = 0; i < children.Count; i++)
+        {
+            var ch = children[i];
+            if (ch == null) continue;
+            WalkNode(ch, seen, depth, act, hops + 1);
         }
     }
 
@@ -917,14 +964,15 @@ internal static class ItemEditor
         AppendTagBlock(sb, "state", SafeState(() => item.state));
         AppendTagBlock(sb, "modifiedState", SafeState(() => item.modifiedState));
 
-        // 有没有子物品（UI 侧据此显示可展开箭头）
+        // 有没有子节点（UI 侧据此显示可展开箭头）
         int childCount = 0;
         try { var ch = item.children; if (ch != null) childCount = ch.Count; } catch { }
         sb.Append(",\"childCount\":").Append(childCount).Append('}');
 
-        // 递归：容器内的物品以本物品为 parentUid 继续拍平输出
-        if (childCount > 0)
-            EmitChildren(sb, item, path + "/" + id, uid, depth + 1);
+        // 递归：容器内的物品以本物品为 parentUid 继续拍平输出。
+        // 必须无条件下钻——children 里可能是 PixelWindow 这类中间节点，它再往下才是库存，
+        // 只按 childCount 决定是否递归会漏掉"窗口下挂库存"的物品。
+        EmitChildren(sb, item, path + "/" + id, uid, depth + 1);
     }
 
     private static void EmitChildren(System.Text.StringBuilder sb, GameItem item, string childPath, int parentUid, int depth)
@@ -939,14 +987,37 @@ internal static class ItemEditor
         {
             var ch = children[i];
             if (ch == null) continue;
+            EmitNode(sb, ch, childPath, parentUid, depth, 0);
+        }
+    }
 
-            GameItem sub = null;
-            try { sub = ch.TryCast<GameItem>(); } catch { }
-            if (sub != null) { EmitItem(sb, sub, childPath, parentUid, depth); continue; }
+    /// <summary>
+    /// 递归下钻一个 GraphNodeStorage。既不是物品也不是库存的节点（一般是 PixelWindow
+    /// 这类中间窗口——物品的容器就挂在它下面）不算一层，继续往下钻，
+    /// 否则"窗口下挂库存"的物品会整棵丢失，这就是树里物品不全的原因。
+    /// </summary>
+    private static void EmitNode(System.Text.StringBuilder sb, GraphNodeStorage node, string path, int parentUid, int depth, int hops)
+    {
+        if (node == null || depth > MaxDepth || hops > 8 || _jsonCount >= MaxJsonItems) return;
 
-            GameInventory subInv = null;
-            try { subInv = ch.TryCast<GameInventory>(); } catch { }
-            if (subInv != null) EmitInventory(sb, subInv, childPath, parentUid, depth);
+        GameItem item = null;
+        try { item = node.TryCast<GameItem>(); } catch { }
+        if (item != null) { EmitItem(sb, item, path, parentUid, depth); return; }
+
+        GameInventory inv = null;
+        try { inv = node.TryCast<GameInventory>(); } catch { }
+        if (inv != null) { EmitInventory(sb, inv, path, parentUid, depth); return; }
+
+        // 中间节点：不涨 depth，只涨 hops（防环）
+        Il2CppSystem.Collections.Generic.List<GraphNodeStorage> children;
+        try { children = node.children; } catch { return; }
+        if (children == null) return;
+
+        for (int i = 0; i < children.Count; i++)
+        {
+            var ch = children[i];
+            if (ch == null) continue;
+            EmitNode(sb, ch, path, parentUid, depth, hops + 1);
         }
     }
 
