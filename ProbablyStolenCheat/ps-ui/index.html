@@ -603,6 +603,35 @@ function propRow(host, label, field, value, editable, onApply, fav){
   host.appendChild(wrap);
 }
 
+// 只重读"当前选中物品"，不重建整棵树。
+// 游戏里状态变了（耐久消耗、被游戏内部逻辑改过）时，用它把面板拉回最新值。
+async function refreshSelected(){
+  if (!SEL) return log("先选中一件物品", "bad");
+  const uid = SEL.uniqueId;
+  try{
+    const r = await api("/api/find?uid=" + encodeURIComponent(uid));
+    if (!r || !r.ok || !r.item) return log("刷新失败：" + ((r && r.error) || "未知错误"), "bad");
+
+    // 用游戏里的最新数据覆盖属性，但保留树里的层级信息
+    const incoming = Object.assign({}, r.item);
+    delete incoming.parentUid;
+    delete incoming.container;
+    delete incoming.depth;
+
+    SEL = Object.assign({}, SEL, incoming);
+
+    const i = ITEMS.findIndex(x => x.uniqueId === uid);
+    if (i >= 0) ITEMS[i] = Object.assign({}, ITEMS[i], incoming);
+
+    renderTree();
+    renderProps();
+    log(`🔄 已从游戏重读「${SEL.identifier}」共 ${Object.keys(incoming).length} 个字段` +
+        (Array.isArray(SEL.state) ? `（state ${SEL.state.length} 条）` : ""), "ok");
+  }catch(e){
+    log("刷新同步失败：" + e.message, "bad");
+  }
+}
+
 function renderProps(){
   const host = $("props");
   host.textContent = "";
@@ -614,6 +643,19 @@ function renderProps(){
   h.className = "lbl";
   h.textContent = `选中：${SEL.container} / ${SEL.identifier}（uniqueId=${SEL.uniqueId}）`;
   head.appendChild(h);
+
+  // 刷新同步：只重读这一件物品
+  const syncRow = document.createElement("div");
+  syncRow.className = "row";
+  syncRow.style.marginTop = "6px";
+  const sync = document.createElement("button");
+  sync.className = "primary";
+  sync.textContent = "🔄 刷新同步（从游戏重读这件物品）";
+  sync.title = "重新向游戏读取当前选中物品的全部属性值，覆盖面板上显示的旧数据";
+  sync.onclick = refreshSelected;
+  syncRow.appendChild(sync);
+  head.appendChild(syncRow);
+
   host.appendChild(head);
 
   // 收藏区放最上面：耐久 / 电量这种反复要改的一眼就能点到
