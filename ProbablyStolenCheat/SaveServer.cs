@@ -191,6 +191,16 @@ internal static class SaveServer
             case "/api/find": return CallMain(() => ApiFind(query));
             case "/api/itemtag": return CallMain(() => ApiSetTag(body));
             case "/api/localize": return CallMain(() => ApiLocalize(query));
+            case "/api/quick":
+                {
+                    // /api/quick?action=battery 充满所有电池；?action=water[&loose=1] 净化所有水。
+                    // 只改 modifiedState。water 默认严格：要求 7 个 CURRENT_PART_* 标记全在才处理；
+                    // 加 loose=1 才切成宽松（带其中任意一个，就清它含有的那些）。
+                    string q = query ?? "";
+                    string act = q.IndexOf("water", StringComparison.OrdinalIgnoreCase) >= 0 ? "water" : "battery";
+                    bool strict = q.IndexOf("loose=1", StringComparison.OrdinalIgnoreCase) < 0;
+                    return CallMain(() => ItemEditor.DoQuick(act, strict));
+                }
             default: return Err("未知接口 " + path);
         }
     }

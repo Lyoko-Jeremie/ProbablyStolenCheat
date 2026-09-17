@@ -106,6 +106,20 @@
   </div>
 
   <div class="card">
+    <h2>快速作弊</h2>
+    <div class="row">
+      <button class="primary" onclick="quickBattery()">🔋 充满所有电池</button>
+      <button class="primary" onclick="quickWater()">💧 净化所有水</button>
+      <label class="hint" style="display:flex;align-items:center;gap:4px;cursor:pointer;margin:0">
+        <input type="checkbox" id="looseWater" style="width:auto;margin:0">
+        宽松模式（只要带任意一个污染标记就处理）
+      </label>
+      <button onclick="alert('这两个功能都只改物品的 modifiedState（游戏记录的当前实际数值），不动 state（基础值）；只写数值，不改标签的启用状态。\n\n① 充满所有电池：同时带 power_source_item_max_energy.int 和 power_source_item_energy.int 的物品，把当前电量写成上限。\n② 净化所有水：带 CURRENT_PART_* 污染标记的物品，把这些标记清零。\n   默认（严格）：必须 7 个标记全在才处理。\n   勾选宽松模式：带其中任意一个，就清它含有的那些。\n\n实现方式和「收藏夹」完全一样：遍历物品树、逐件检查、直接给内存里的对象赋值，不经过存档读写。\n两类操作都是幂等的，重复点没有副作用。')">说明</button>
+    </div>
+    <p class="hint">改动<b>立即在游戏内生效</b>——全程直接改内存里的物品对象，<b>不写存档</b>。只有当你想让改动在完整退出游戏后仍然保留时，才需要点最下面的「让游戏保存存档」。</p>
+  </div>
+
+  <div class="card">
     <h2>物品（含容器内 · 层级树）</h2>
     <div class="row" style="margin-bottom:10px">
       <input id="filterIn" placeholder="筛选 identifier / 名字 / 容器名" style="min-width:260px">
@@ -274,6 +288,28 @@ async function setFavor(){
   if (!Number.isFinite(v)) return log("好感度必须是整数", "bad");
   const r = await api("/api/favor", {value:v});
   if (r.ok){ log("好感度已设为 " + r.wildFavor, "ok"); refreshStatus(); } else log(r.error, "bad");
+}
+
+/* ------------------------------------------------------------ 快速作弊
+   两个批量功能，全部只作用于物品的 modifiedState（游戏记录的当前实际数值）。 */
+async function quickRun(action, label, extra){
+  if (!confirm(`确定要${label}吗？\n\n这会直接修改内存里所有匹配物品的 modifiedState（只写数值，不改标签的启用状态），立即生效，不写存档。`)) return;
+  try{
+    const r = await api("/api/quick?action=" + action + (extra || ""));
+    if (!r.ok) return log(r.error, "bad");
+    // 水默认严格，后端回显 strict 表示这次实际用的模式
+    const mode = r.action === "water" ? (r.strict ? "（严格模式）" : "（宽松模式）") : "";
+    log(`✅ ${label}${mode}：扫描 ${r.scanned} 件，其中带该属性 ${r.eligible} 件，实际改动 ${r.changed} 件，共 ${r.tags} 个数值`, "ok");
+    if (r.eligible === 0) log("扫描到的物品里没有一件带这个属性——按规则（没有该属性就不设置）不改任何东西。", "bad");
+    else if (r.changed === 0) log("带该属性的物品都已经处理过了，无需改动。", "ok");
+    await loadTree();   // 重读物品，右侧属性面板里的值也跟着刷新
+  }catch(e){ log(label + "失败：" + e.message, "bad"); }
+}
+function quickBattery(){ return quickRun("battery", "充满所有电池"); }
+function quickWater(){
+  // 默认严格（不传参数）；勾了「宽松模式」才传 loose=1
+  const loose = $("looseWater") && $("looseWater").checked;
+  return quickRun("water", "净化所有水", loose ? "&loose=1" : "");
 }
 
 /* ---------------------------------------------------------------- 物品树 */

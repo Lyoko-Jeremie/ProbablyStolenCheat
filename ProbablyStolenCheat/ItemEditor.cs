@@ -656,6 +656,124 @@ internal static class ItemEditor
         WalkInventory(emp._docInvElement_k__BackingField, seen, 0, act);
     }
 
+    /* ------------------------------------------------------------ 快速作弊
+       批量功能，全部只作用于 modifiedState（游戏把"当前实际数值"记在这里）。 */
+
+    private const string BatteryMaxTag = "power_source_item_max_energy";
+    private const string BatteryCurTag = "power_source_item_energy";
+
+    private static readonly string[] WaterPartTags = {
+        "CURRENT_PART_HEAVY_METAL",
+        "CURRENT_PART_ORGANIC_WASTE",
+        "CURRENT_PART_MICROPLASTIC",
+        "CURRENT_PART_MICROBE",
+        "CURRENT_PART_CHEMICAL_CONTAMINANT",
+        "CURRENT_PART_PHYSICAL_CONTAMINANT",
+        "CURRENT_PART_MINERAL"
+    };
+
+    /// <summary>
+    /// 只取"已经存在"的标签，不存在返回 null。
+    ///
+    /// 不能直接用 TagSystem.GetTag：它在标签不存在时会顺手新建一个空标签塞进 dict，
+    /// 于是调用方永远拿不到 null，"没有该属性就跳过"的规则会静默失效——
+    /// 批量遍历时就表现为"所有物品都被写上了这个属性"。
+    /// 所以这里先查 dict 判断存在性，确认存在后再取。
+    /// </summary>
+    private static TagState GetExistingTag(TagSystem ts, string name)
+    {
+        if (ts == null || string.IsNullOrEmpty(name)) return null;
+        try
+        {
+            var dict = ts.dict;
+            if (dict == null || !dict.ContainsKey(name)) return null;
+            return dict[name];
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// 快速作弊入口。
+    ///   "battery" —— 同时有能量上限与当前电量的物品，把当前电量写成上限（充满）。
+    ///   "water"   —— 含水位污染标记的物品，把这些标记清零（净化）。
+    /// strictWater: water 专用。true = 必须 7 个 CURRENT_PART_* 标记全在才处理；
+    ///              false = 只要带其中任意一个，就把它含有的那些清零。
+    ///
+    /// 与收藏夹同一套规则：只操作"已经存在"的标签（GetExistingTag），取不到就跳过——
+    /// 绝不新建、不补默认值。所以物品没有该属性时，改动不会落到它身上。
+    /// 只读写 modifiedState；只写 valueInt，不碰 valueEnabled。
+    /// </summary>
+    public static string DoQuick(string action, bool strictWater)
+    {
+        int scanned = 0, eligible = 0, changed = 0, tags = 0;
+
+        ForEachItem(it =>
+        {
+            scanned++;
+
+            TagSystem ts = null;
+            try { ts = it.modifiedState; } catch { return; }
+            if (ts == null) return;
+
+            if (action == "battery")
+            {
+                // 上限与当前值两个标签都必须已存在；缺任何一个就整件跳过（绝不新建）
+                var maxT = GetExistingTag(ts, BatteryMaxTag);
+                var curT = GetExistingTag(ts, BatteryCurTag);
+                if (maxT == null || curT == null) return;
+
+                eligible++;                                          // 这件确实是电池
+                int max = SafeInt(() => maxT.valueInt);
+                if (SafeInt(() => curT.valueInt) == max) return;      // 已经是满的
+
+                try { curT.valueInt = max; } catch { return; }
+                changed++;
+                tags++;
+                return;
+            }
+
+            if (action == "water")
+            {
+                bool counted = false;
+
+                // 严格模式：7 个污染标记必须全在，缺一个就整件跳过
+                if (strictWater)
+                {
+                    for (int k = 0; k < WaterPartTags.Length; k++)
+                    {
+                        if (GetExistingTag(ts, WaterPartTags[k]) == null) return;
+                    }
+                    eligible++;
+                    counted = true;
+                }
+
+                int n = 0, present = 0;
+                for (int k = 0; k < WaterPartTags.Length; k++)
+                {
+                    var st = GetExistingTag(ts, WaterPartTags[k]);
+                    if (st == null) continue;    // 这件没有这个污染项 → 完全不碰它
+                    present++;
+                    if (SafeInt(() => st.valueInt) == 0) continue;      // 本来就是 0
+
+                    try { st.valueInt = 0; } catch { continue; }
+                    n++;
+                }
+
+                // 宽松模式：只要带上其中任意一个就算符合条件
+                if (!counted && present > 0) eligible++;
+                if (n > 0) { changed++; tags += n; }
+            }
+        });
+
+        Log?.LogInfo($"快速作弊 {action}{(strictWater ? "(严格)" : "")}：扫描 {scanned} 件，符合条件 {eligible} 件，实际改动 {changed} 件，涉及 {tags} 个值");
+        return "{\"ok\":true,\"action\":" + JStr(action)
+             + ",\"strict\":" + (strictWater ? "true" : "false")
+             + ",\"scanned\":" + scanned
+             + ",\"eligible\":" + eligible
+             + ",\"changed\":" + changed
+             + ",\"tags\":" + tags + "}";
+    }
+
     private static void WalkInventory(GameInventory inv, System.Collections.Generic.HashSet<int> seen, int depth, Action<GameItem> act)
     {
         if (inv == null || depth > MaxDepth) return;
