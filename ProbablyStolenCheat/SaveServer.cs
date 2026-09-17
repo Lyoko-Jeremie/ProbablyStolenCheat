@@ -191,6 +191,8 @@ internal static class SaveServer
             case "/api/find": return CallMain(() => ApiFind(query));
             case "/api/itemtag": return CallMain(() => ApiSetTag(body));
             case "/api/localize": return CallMain(() => ApiLocalize(query));
+            case "/api/reputation": return CallMain(ApiReputations);
+            case "/api/reputation/set": return CallMain(() => ApiSetReputation(body));
             case "/api/quick":
                 {
                     // /api/quick?action=battery 充满所有电池；?action=water[&loose=1] 净化所有水。
@@ -275,6 +277,9 @@ internal static class SaveServer
             { st.valueString = s.GetString(); changed.Append("string "); }
         }
         catch (Exception e) { return Err("写入标签失败：" + e.Message); }
+
+        // 值改了，让游戏重算这件物品的外观（贴图缓存在 GameItemElement.spriteMods 里）
+        ItemEditor.RefreshItemVisual(item);
 
         Log?.LogInfo($"外部 UI：{item.identifier} 的 {which}.{tag} → {changed}");
         return "{\"ok\":true,\"changed\":" + JsonStr(changed.ToString().Trim()) + "}";
@@ -364,6 +369,122 @@ internal static class SaveServer
     private static string TreeJson()
     {
         return ItemEditor.TreeJson();
+    }
+
+    /// <summary>
+    /// GET /api/reputation —— 列出所有派系声望。
+    ///
+    /// 数据在 PlayerStore.storeReputations（List&lt;StoreReputation&gt;），每条代表一个派系：
+    /// factionId（内部 id）/ factionDisplay（原文名）/ amount（double，真实数值）/ perks。
+    /// 界面显示值是 GetReputation()（int，由 amount 取整），中文名走游戏自己的
+    /// StoreReputation.GetFactionNameByID()。
+    /// </summary>
+    private static string ApiReputations()
+    {
+        var ps = Store();
+        if (ps == null) return Err("还没进游戏（PlayerStore 未创建）");
+
+        Il2CppSystem.Collections.Generic.List<StoreReputation> list = null;
+        try { list = ps.storeReputations; } catch { }
+        if (list == null) return Err("storeReputations 为 null（这个存档没有声望数据）");
+
+        var sb = new StringBuilder();
+        sb.Append("{\"ok\":true,\"count\":").Append(list.Count).Append(",\"items\":[");
+
+        int w = 0;
+        for (int i = 0; i < list.Count; i++)
+        {
+            StoreReputation r = null;
+            try { r = list[i]; } catch { }
+            if (r == null) continue;
+
+            string id = ""; double amount = 0; int shown = 0; string disp = "";
+            try { id = r.factionId ?? ""; } catch { }
+            try { amount = r.amount; } catch { }
+            try { shown = r.GetReputation(); } catch { }
+            try { disp = r.factionDisplay ?? ""; } catch { }
+
+            string cn = "";
+            try { cn = StoreReputation.GetFactionNameByID(id) ?? ""; } catch { }
+
+            if (w++ > 0) sb.Append(',');
+            sb.Append("{\"index\":").Append(i)
+              .Append(",\"factionId\":").Append(JsonStr(id))
+              .Append(",\"factionName\":").Append(JsonStr(cn))
+              .Append(",\"factionDisplay\":").Append(JsonStr(disp))
+              .Append(",\"amount\":").Append(amount.ToString("R"))
+              .Append(",\"shown\":").Append(shown)
+              .Append('}');
+        }
+
+        sb.Append("]}");
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// POST /api/reputation/set —— 设置某个派系的声望。
+    /// 体：{factionId:"...", amount:123} 或 {index:0, amount:123}
+    /// 直接写 amount（double，游戏内部就是按 double 存的），然后调
+    /// StoreReputation.UpdateReputation() 让游戏重算 perk 解锁和声望 UI。
+    /// </summary>
+    private static string ApiSetReputation(string body)
+    {
+        var ps = Store();
+        if (ps == null) return Err("还没进游戏（PlayerStore 未创建）");
+
+        using var doc = Parse(body);
+        if (doc == null) return Err("请求体不是合法 JSON");
+        var root = doc.RootElement;
+
+        if (!root.TryGetProperty("amount", out var amtEl) || !amtEl.TryGetDouble(out var amount))
+            return Err("请求体缺少数值 amount");
+
+        // 游戏自己把派系声望夹在 -200 ~ +200（初始 0）。这里不拦超限输入——
+        // 你想填多少就写多少；但如果游戏把值夹回边界，实际效果会和你填的不一致。
+        if (amount < -200 || amount > 200)
+            Log?.LogWarning($"声望 {amount} 超出游戏常规范围 -200 ~ +200，游戏可能会把它夹回边界");
+
+        string factionId = null;
+        if (root.TryGetProperty("factionId", out var idEl) && idEl.ValueKind == JsonValueKind.String)
+            factionId = idEl.GetString();
+
+        int index = -1;
+        if (root.TryGetProperty("index", out var ixEl) && ixEl.TryGetInt32(out var ix)) index = ix;
+
+        Il2CppSystem.Collections.Generic.List<StoreReputation> list = null;
+        try { list = ps.storeReputations; } catch { }
+        if (list == null) return Err("storeReputations 为 null");
+
+        StoreReputation target = null;
+        for (int i = 0; i < list.Count; i++)
+        {
+            StoreReputation r = null;
+            try { r = list[i]; } catch { }
+            if (r == null) continue;
+
+            if (index >= 0)
+            {
+                if (i == index) { target = r; break; }
+                continue;
+            }
+
+            string id = null;
+            try { id = r.factionId; } catch { }
+            if (factionId != null && id == factionId) { target = r; break; }
+        }
+
+        if (target == null) return Err("没找到该派系的声望条目");
+
+        double before = 0;
+        try { before = target.amount; } catch { }
+        try { target.amount = amount; } catch (Exception e) { return Err("写入 amount 失败：" + e.Message); }
+
+        try { StoreReputation.UpdateReputation(); } catch { }   // 刷新 perk 解锁 / 声望 UI
+
+        string tid = "";
+        try { tid = target.factionId ?? ""; } catch { }
+        Log?.LogInfo($"外部 UI：声望 {tid} amount {before} → {amount}");
+        return "{\"ok\":true,\"factionId\":" + JsonStr(tid) + ",\"amount\":" + amount.ToString("R") + "}";
     }
 
     private static string ApiSetCash(string body)

@@ -120,6 +120,19 @@
   </div>
 
   <div class="card">
+    <h2>派系声望</h2>
+    <div class="row" style="margin-bottom:8px">
+      <button onclick="loadReps()">读取声望</button>
+      <button class="primary" onclick="setAllReps(200)">全部 +200（最高）</button>
+      <button onclick="setAllReps(-200)">全部 -200（最低）</button>
+      <button onclick="setAllReps(0)">全部归零</button>
+      <span class="hint" id="repMeta"></span>
+    </div>
+    <div id="reps"><p class="hint">点「读取声望」加载各派系声望。</p></div>
+    <p class="hint">声望按派系存在 <b>storeReputations</b> 里，数值是 <b>amount</b>（double）；这里显示的是它取整后的值。<b>游戏常规范围 -200 ~ +200</b>（初始 0）——<b>允许填超限值</b>，但游戏可能把它夹回边界，届时应以游戏内显示为准。改完立即生效，不写存档。</p>
+  </div>
+
+  <div class="card">
     <h2>物品（含容器内 · 层级树）</h2>
     <div class="row" style="margin-bottom:10px">
       <input id="filterIn" placeholder="筛选 identifier / 名字 / 容器名" style="min-width:260px">
@@ -310,6 +323,76 @@ function quickWater(){
   // 默认严格（不传参数）；勾了「宽松模式」才传 loose=1
   const loose = $("looseWater") && $("looseWater").checked;
   return quickRun("water", "净化所有水", loose ? "&loose=1" : "");
+}
+
+/* ------------------------------------------------------------ 派系声望
+   数据：PlayerStore.storeReputations → StoreReputation { factionId, factionDisplay, amount(double), perks }
+   游戏内部按 double 存 amount，面板显示的 shown 是 GetReputation() 取整后的值。
+   修改 = 直接写 amount（不写存档），再让游戏 UpdateReputation() 刷新 perk / 声望 UI。 */
+let REPS = [];
+
+async function loadReps(){
+  try{
+    const r = await api("/api/reputation");
+    if (!r.ok) return log(r.error, "bad");
+    REPS = r.items || [];
+    renderReps();
+    if (!REPS.length) log("这个存档里没有声望数据（storeReputations 为空）", "bad");
+  }catch(e){ log("读取声望失败：" + e.message, "bad"); }
+}
+
+function renderReps(){
+  const host = $("reps");
+  host.textContent = "";
+  if (!REPS.length){ host.innerHTML = '<p class="hint">没有声望数据。</p>'; $("repMeta").textContent = ""; return; }
+
+  for (const rp of REPS){
+    const row = document.createElement("div");
+    row.className = "row";
+    row.style.marginTop = "6px";
+
+    const lbl = document.createElement("span");
+    lbl.className = "lbl";
+    lbl.style.minWidth = "170px";
+    lbl.textContent = (rp.factionName && rp.factionName !== rp.factionId)
+      ? `${rp.factionName}（${rp.factionId}）` : (rp.factionDisplay || rp.factionId);
+
+    const now = document.createElement("span");
+    now.className = "tag";
+    now.textContent = `当前 ${rp.shown}` + (Number(rp.amount) !== rp.shown ? `（精确 ${rp.amount}）` : "");
+
+    const inp = document.createElement("input");
+    inp.type = "number";
+    inp.step = "1";
+    inp.value = rp.amount;
+    inp.style.width = "110px";
+
+    const apply = document.createElement("button");
+    apply.className = "primary";
+    apply.textContent = "应用";
+    apply.onclick = () => setRep(rp, parseFloat(inp.value));
+
+    row.append(lbl, now, inp, apply);
+    host.appendChild(row);
+  }
+  $("repMeta").textContent = `共 ${REPS.length} 个派系`;
+}
+
+async function setRep(rp, amount){
+  if (!Number.isFinite(amount)) return log("声望必须是数字", "bad");
+  const r = await api("/api/reputation/set", {factionId: rp.factionId, amount: amount});
+  if (!r.ok) return log(r.error, "bad");
+  log(`✅ ${rp.factionName || rp.factionId} 声望 → ${r.amount}`, "ok");
+  await loadReps();
+}
+
+async function setAllReps(amount){
+  if (!REPS.length) await loadReps();
+  if (!REPS.length) return;
+  if (!confirm(`确定把全部 ${REPS.length} 个派系的声望都设为 ${amount} 吗？\n\n立即生效，不写存档。`)) return;
+  for (const rp of REPS) await api("/api/reputation/set", {factionId: rp.factionId, amount: amount});
+  log(`✅ 已把全部 ${REPS.length} 个派系的声望设为 ${amount}`, "ok");
+  await loadReps();
 }
 
 /* ---------------------------------------------------------------- 物品树 */

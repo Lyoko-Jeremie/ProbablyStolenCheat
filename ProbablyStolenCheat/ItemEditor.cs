@@ -693,6 +693,25 @@ internal static class ItemEditor
     }
 
     /// <summary>
+    /// 改完内存里的数值后，让游戏重算这件物品的外观。
+    ///
+    /// 游戏把物品贴图（含“电池没电”这类状态图）缓存在 GameItemElement.spriteMods 里，
+    /// 只在 Validate() 时按 state / modifiedState 重新推导（内部走 SortedByPriority +
+    /// _CreateRDS(..., TagSystem, ...) 那一套）。直接改内存数值不会触发它，
+    /// 于是出现“数值对了、图标还是旧的”——改完补一次 Validate() 即可。
+    /// </summary>
+    public static void RefreshItemVisual(GameItem item)
+    {
+        if (item == null) return;
+        try
+        {
+            var el = item.TryCast<GameItemElement>();
+            if (el != null) el.Validate();
+        }
+        catch { }
+    }
+
+    /// <summary>
     /// 快速作弊入口。
     ///   "battery" —— 同时有能量上限与当前电量的物品，把当前电量写成上限（充满）。
     ///   "water"   —— 含水位污染标记的物品，把这些标记清零（净化）。
@@ -729,6 +748,7 @@ internal static class ItemEditor
                 try { curT.valueInt = max; } catch { return; }
                 changed++;
                 tags++;
+                RefreshItemVisual(it);      // 值改了，让游戏重算贴图，否则图标还是“没电”
                 return;
             }
 
@@ -761,7 +781,7 @@ internal static class ItemEditor
 
                 // 宽松模式：只要带上其中任意一个就算符合条件
                 if (!counted && present > 0) eligible++;
-                if (n > 0) { changed++; tags += n; }
+                if (n > 0) { changed++; tags += n; RefreshItemVisual(it); }
             }
         });
 
