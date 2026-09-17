@@ -350,8 +350,210 @@ function renderTree(){
 function expandAll(){ for (const it of ITEMS) if (it.childCount > 0) OPEN.add(it.uniqueId); renderTree(); }
 function collapseAll(){ OPEN.clear(); renderTree(); }
 
+/* ------------------------------------------------------------ 收藏功能
+   收藏项存在浏览器 localStorage（跨会话保留）。结构：
+     { id, kind:"item", field, label, type, value }
+     { id, kind:"tag",  which, tag, field, label, type, value } */
+const FAV_KEY = "ps_favs";
+
+function loadFavs(){
+  try { const a = JSON.parse(localStorage.getItem(FAV_KEY) || "[]"); return Array.isArray(a) ? a : []; }
+  catch { return []; }
+}
+function saveFavs(list){
+  try { localStorage.setItem(FAV_KEY, JSON.stringify(list)); }
+  catch (e) { log("收藏保存失败：" + e.message, "bad"); }
+}
+function favId(o){
+  return o.kind === "item" ? `item:${o.field}` : `tag:${o.which}.${o.tag}.${o.field}`;
+}
+function isFav(id){ return loadFavs().some(f => f.id === id); }
+
+function coerceValue(type, raw){
+  if (type === "bool") return String(raw).toLowerCase() === "true";
+  if (type === "int" || type === "long") return parseInt(raw, 10);
+  if (type === "float" || type === "double") return parseFloat(raw);
+  return String(raw);
+}
+
+// 取某条收藏在“当前选中物品”上的当前值。
+// 返回 { exists, value }：exists=false 表示这件物品根本没有这一项（UI 要置灰禁用）。
+function favCurrentValue(f){
+  if (!SEL) return { exists: false, value: undefined };
+
+  if (f.kind === "item"){
+    return (f.field in SEL) ? { exists: true, value: SEL[f.field] }
+                            : { exists: false, value: undefined };
+  }
+
+  if (f.kind === "tag"){
+    const arr = (f.which === "modifiedState") ? SEL.modifiedState : SEL.state;
+    if (!Array.isArray(arr)) return { exists: false, value: undefined };
+    const t = arr.find(x => x.tag === f.tag);
+    if (!t) return { exists: false, value: undefined };
+    return { exists: true, value: t[f.field] };
+  }
+
+  return { exists: false, value: undefined };
+}
+
+// 把一条收藏应用到当前选中物品
+async function applyFav(f){
+  if (!SEL) return log("先选中一件物品", "bad");
+  if (!favCurrentValue(f).exists) return log(`当前物品没有「${f.label}」，已跳过`, "warn");
+
+  const body = {uniqueId: SEL.uniqueId};
+  let path;
+  if (f.kind === "item"){
+    body[f.field] = coerceValue(f.type, f.value);
+    path = "/api/item";
+  } else if (f.kind === "tag"){
+    body.which = f.which; body.tag = f.tag;
+    body[f.field] = coerceValue(f.type, f.value);
+    path = "/api/itemtag";
+  } else {
+    return log("这类收藏暂不支持", "warn");
+  }
+  const r = await api(path, body);
+  if (r.ok){ log(`★ 已把「${f.label}」设为 ${f.value}`, "ok"); loadTree(); }
+  else log(`应用收藏失败：${r.error}`, "bad");
+}
+
+async function applyAllFavs(){
+  const favs = loadFavs();
+  if (!favs.length) return log("还没有收藏项", "warn");
+  if (!SEL) return log("先选中一件物品", "bad");
+
+  let ok = 0, skipped = 0;
+  for (const f of favs){
+    // 当前物品没有这一项就跳过，不硬写无效数据
+    if (!favCurrentValue(f).exists){ skipped++; continue; }
+
+    const body = {uniqueId: SEL.uniqueId};
+    let path;
+    if (f.kind === "item"){ body[f.field] = coerceValue(f.type, f.value); path = "/api/item"; }
+    else if (f.kind === "tag"){ body.which = f.which; body.tag = f.tag; body[f.field] = coerceValue(f.type, f.value); path = "/api/itemtag"; }
+    else { skipped++; continue; }
+    try { const r = await api(path, body); if (r.ok) ok++; else skipped++; } catch { skipped++; }
+  }
+  log(`★ 已应用 ${ok} 条收藏` + (skipped ? `，跳过 ${skipped} 条（当前物品没有这些项）` : ""),
+      skipped ? "warn" : "ok");
+  loadTree();
+}
+
+// ☆ 按钮：点一下把当前值存成收藏（已收藏则点=用当前值更新）
+function favButton(meta, getValue){
+  const id = favId(meta);
+  const btn = document.createElement("button");
+  btn.title = "收藏这一项（连同当前值）；再点一次 = 用当前值更新收藏";
+  const paint = () => { btn.textContent = isFav(id) ? "★" : "☆"; };
+  paint();
+  btn.onclick = () => {
+    let v;
+    try { v = getValue(); } catch { v = ""; }
+    const list = loadFavs();
+    const i = list.findIndex(f => f.id === id);
+    if (i >= 0){ list[i].value = v; saveFavs(list); log(`已更新收藏「${meta.label}」= ${v}`, "ok"); }
+    else { list.push(Object.assign({}, meta, { id, value: v })); saveFavs(list); log(`已收藏「${meta.label}」= ${v}`, "ok"); }
+    paint();
+    renderProps();
+  };
+  return btn;
+}
+
+// 收藏区：列出收藏 + 逐个应用 / 一键全部应用
+function renderFavs(host){
+  if (!host) return;
+  const list = loadFavs();
+
+  const h = document.createElement("div");
+  h.className = "lbl";
+  h.textContent = `════ 收藏（${list.length} 项，存在浏览器本地）════`;
+  host.appendChild(h);
+
+  if (!list.length){
+    const p = document.createElement("div");
+    p.className = "hint";
+    p.textContent = "点任意字段右边的 ☆ 就能收藏它（连同当前值）。";
+    return;
+  }
+
+  list.forEach(f => {
+    const cur = favCurrentValue(f);
+    const missing = !cur.exists;
+
+    const row = document.createElement("div");
+    row.className = "val";
+    if (missing) row.style.opacity = "0.45";   // 置灰：当前物品没有这一项
+
+    const name = document.createElement("span");
+    name.className = "ro";
+    name.style.flex = "1";
+    const head = `★ ${f.label}` + (f.kind === "tag" ? `　(${f.which})` : "");
+    if (missing){
+      name.textContent = head + "　—　当前物品没有这一项";
+      name.title = "这件物品上不存在该字段/标签，已禁用，避免写入无效数据";
+    } else {
+      name.textContent = head + `　当前 = ${cur.value}`;
+    }
+
+    const inp = document.createElement("input");
+    inp.style.flex = "0 0 110px";
+    inp.value = String(f.value);
+    inp.title = "收藏的目标值（点“改目标值”才会保存）";
+
+    const setv = document.createElement("button");
+    setv.textContent = "改目标值";
+    setv.onclick = () => {
+      const l = loadFavs();
+      const i = l.findIndex(x => x.id === f.id);
+      if (i < 0) return;
+      l[i].value = inp.value;
+      saveFavs(l);
+      log(`收藏「${f.label}」的目标值改为 ${inp.value}`, "ok");
+    };
+
+    const run = document.createElement("button");
+    run.className = "primary";
+    run.textContent = "应用";
+    run.disabled = missing;                    // 置灰禁用
+    run.title = missing ? "当前物品没有这一项" : "把该项设为收藏的目标值";
+    run.onclick = () => applyFav(f);
+
+    const del = document.createElement("button");
+    del.textContent = "×";
+    del.title = "取消收藏";
+    del.onclick = () => {
+      saveFavs(loadFavs().filter(x => x.id !== f.id));
+      log(`已取消收藏「${f.label}」`, "warn");
+      renderProps();
+    };
+
+    row.append(name, inp, setv, run, del);
+    host.appendChild(row);
+  });
+
+  const bar = document.createElement("div");
+  bar.className = "row";
+  bar.style.marginTop = "6px";
+  const all = document.createElement("button");
+  all.className = "primary";
+  all.textContent = "★ 一键全部应用";
+  all.onclick = applyAllFavs;
+  const clr = document.createElement("button");
+  clr.textContent = "清空收藏";
+  clr.onclick = () => {
+    if (!confirm("清空所有收藏项？")) return;
+    saveFavs([]);
+    log("已清空收藏", "warn");
+    renderProps();
+  };
+  bar.append(all, clr);
+  host.appendChild(bar);
+}
+
 /* ------------------------------------------------------------ 属性面板 */
-function propRow(host, label, field, value, editable, onApply){
+function propRow(host, label, field, value, editable, onApply, fav){
   const wrap = document.createElement("div");
   wrap.className = "prop";
 
@@ -388,11 +590,13 @@ function propRow(host, label, field, value, editable, onApply){
     // 布尔字段原样传布尔值，其它传字符串——后端会严格区分
     btn.onclick = () => onApply(field, typeof value === "boolean" ? (inp.value === "true") : inp.value);
     val.append(inp, btn);
+    if (fav) val.appendChild(favButton(fav, () => (typeof value === "boolean" ? (inp.value === "true") : inp.value)));
   } else {
     const ro = document.createElement("span");
     ro.className = "ro";
     ro.textContent = value === null || value === undefined ? "（null）" : String(value);
     val.appendChild(ro);
+    if (fav) val.appendChild(favButton(fav, () => ro.textContent));
   }
 
   wrap.append(lbl, val);
@@ -412,18 +616,34 @@ function renderProps(){
   head.appendChild(h);
   host.appendChild(head);
 
+  // 收藏区放最上面：耐久 / 电量这种反复要改的一眼就能点到
+  const favBox = document.createElement("div");
+  favBox.className = "prop";
+  host.appendChild(favBox);
+  renderFavs(favBox);
+
   const g1 = document.createElement("div");
   g1.className = "prop";
   g1.innerHTML = '<div class="lbl">════ 基本属性（GameItem）════</div>';
   host.appendChild(g1);
 
+  const ITEM_NUM_INT  = ["unitCount"];
+  const ITEM_NUM_LONG = ["unitValue","unitBaseValue","lateUnitValue","backupUnitValue"];
+
   for (const f of Object.keys(ITEM_LABELS)){
     if (!(f in SEL)) continue;
     const editable = ITEM_EDITABLE.includes(f);
-    propRow(host, ITEM_LABELS[f], f, SEL[f], editable, async (field, v) => {
+    const raw = SEL[f];
+    const type = typeof raw === "boolean" ? "bool"
+               : ITEM_NUM_INT.includes(f)  ? "int"
+               : ITEM_NUM_LONG.includes(f) ? "long"
+               : "str";
+
+    propRow(host, ITEM_LABELS[f], f, raw, editable, async (field, v) => {
       const body = {uniqueId: SEL.uniqueId};
-      const numFields = ["unitCount","unitValue","unitBaseValue","lateUnitValue","backupUnitValue"];
-      if (numFields.includes(field)){
+      if (typeof v === "boolean"){
+        body[field] = v;
+      } else if (ITEM_NUM_INT.includes(field) || ITEM_NUM_LONG.includes(field)){
         const n = parseInt(v, 10);
         if (!Number.isFinite(n)) return log(`${ITEM_LABELS[field]} 必须是整数`, "bad");
         body[field] = n;
@@ -433,7 +653,7 @@ function renderProps(){
       const r = await api("/api/item", body);
       if (r.ok){ log(`已改 ${SEL.identifier} 的 ${ITEM_LABELS[field]}`, "ok"); loadTree(); }
       else log(r.error, "bad");
-    });
+    }, { kind: "item", field: f, label: ITEM_LABELS[f], type });
   }
 
   // 特征
@@ -547,6 +767,9 @@ function renderProps(){
 
           rows.push([label, field, type, inp]);
           row.append(name, inp);
+          row.appendChild(favButton(
+            { kind: "tag", which, tag: t.tag, field, type, label: `${t.tag}.${field}` },
+            () => (type === "bool" ? (inp.value === "true") : inp.value)));
           box.appendChild(row);
         };
 
