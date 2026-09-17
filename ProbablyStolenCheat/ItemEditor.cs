@@ -298,14 +298,14 @@ internal static class ItemEditor
         string id = item.identifier ?? "?";
         string nm = item.name ?? "";
 
-        int childCount = 0;
-        try { var ch = item.children; if (ch != null) childCount = ch.Count; } catch { }
+        // 同样不能用 children.Count（里面通常只有一个 PixelWindow 中间节点），要递归数真实物品数
+        int childCount = CountInner(item, depth + 1, 0);
         bool isContainer = childCount > 0;
         bool open = filtering || _openItems.Contains(uid);  // 有筛选时自动全展开，方便看命中项
 
         string indent = new string(' ', depth * 2);
         string mark = isContainer ? (open ? "▼" : "▶") : "·";
-        string suffix = isContainer ? $"  （内含 {childCount} 节点）" : "";
+        string suffix = isContainer ? $"  （内含 {childCount} 件）" : "";
         string text = $"{indent}{mark} {id} | {nm} | v={item.unitValue}{suffix}";
 
         int rowId = _rows;
@@ -964,15 +964,72 @@ internal static class ItemEditor
         AppendTagBlock(sb, "state", SafeState(() => item.state));
         AppendTagBlock(sb, "modifiedState", SafeState(() => item.modifiedState));
 
-        // 有没有子节点（UI 侧据此显示可展开箭头）
-        int childCount = 0;
-        try { var ch = item.children; if (ch != null) childCount = ch.Count; } catch { }
+        // 内含物品数：不能用 children.Count —— 那里面往往只有一个 PixelWindow 中间节点，
+        // 真正的物品挂在它下面，所以必须递归数。（UI 用这个数字显示 📦 标记）
+        int childCount = CountInner(item, depth + 1, 0);
         sb.Append(",\"childCount\":").Append(childCount).Append('}');
 
         // 递归：容器内的物品以本物品为 parentUid 继续拍平输出。
-        // 必须无条件下钻——children 里可能是 PixelWindow 这类中间节点，它再往下才是库存，
-        // 只按 childCount 决定是否递归会漏掉"窗口下挂库存"的物品。
+        // 必须无条件下钻——children 里可能是 PixelWindow 这类中间节点，它再往下才是库存。
         EmitChildren(sb, item, path + "/" + id, uid, depth + 1);
+    }
+
+    /// <summary>
+    /// GameItem 重载。Il2CppInterop 生成的类是普通 class，不会隐式转成 GraphNodeStorage 接口，
+    /// 必须 TryCast 一次；有了这个重载，调用处可以直接传 GameItem。
+    /// </summary>
+    private static int CountInner(GameItem item, int depth, int hops)
+    {
+        if (item == null) return 0;
+        GraphNodeStorage node = null;
+        try { node = item.TryCast<GraphNodeStorage>(); } catch { return 0; }
+        return node == null ? 0 : CountInner(node, depth, hops);
+    }
+
+    /// <summary>数一个节点里（穿透中间窗口节点）真正装着多少件物品，含更深层。</summary>
+    private static int CountInner(GraphNodeStorage node, int depth, int hops)
+    {
+        if (node == null || depth > MaxDepth || hops > 8) return 0;
+
+        Il2CppSystem.Collections.Generic.List<GraphNodeStorage> children;
+        try { children = node.children; } catch { return 0; }
+        if (children == null) return 0;
+
+        int n = 0;
+        for (int i = 0; i < children.Count; i++)
+        {
+            var ch = children[i];
+            if (ch == null) continue;
+
+            GameItem sub = null;
+            try { sub = ch.TryCast<GameItem>(); } catch { }
+            if (sub != null) { n += 1 + CountInner(sub, depth + 1, 0); continue; }
+
+            GameInventory inv = null;
+            try { inv = ch.TryCast<GameInventory>(); } catch { }
+            if (inv != null) { n += CountInventoryItems(inv, depth + 1); continue; }
+
+            n += CountInner(ch, depth, hops + 1);   // 中间窗口节点：不涨 depth
+        }
+        return n;
+    }
+
+    private static int CountInventoryItems(GameInventory inv, int depth)
+    {
+        if (inv == null || depth > MaxDepth) return 0;
+
+        Il2CppSystem.Collections.Generic.List<GameItem> items;
+        try { items = inv.childItems; } catch { return 0; }
+        if (items == null) return 0;
+
+        int n = 0;
+        for (int i = 0; i < items.Count; i++)
+        {
+            var it = items[i];
+            if (it == null) continue;
+            n += 1 + CountInner(it, depth + 1, 0);
+        }
+        return n;
     }
 
     private static void EmitChildren(System.Text.StringBuilder sb, GameItem item, string childPath, int parentUid, int depth)
