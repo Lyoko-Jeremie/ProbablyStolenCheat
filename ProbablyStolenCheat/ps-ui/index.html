@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Probably Stolen · 存档与修改工具</title>
+<style>
+  :root{
+    --bg:#0e1014; --panel:#171a21; --panel2:#1e222b; --line:#2b303b;
+    --fg:#dfe3ea; --dim:#8b93a3; --accent:#59c2ff; --accent2:#7ee787;
+    --warn:#f0b72f; --bad:#ff6b6b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:13px/1.5 "Segoe UI","Microsoft YaHei",system-ui,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:10px 16px;
+         border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+  header h1{font-size:15px;margin:0;font-weight:600}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--bad);flex:none}
+  .dot.ok{background:var(--accent2)}
+  .grow{flex:1}
+  main{padding:14px 16px;display:grid;gap:14px;max-width:1500px;margin:0 auto}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+  .card h2{font-size:12px;margin:0 0 10px;color:var(--dim);font-weight:600;letter-spacing:.08em}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+         border-radius:6px;padding:6px 11px;cursor:pointer;font:inherit}
+  button:hover{border-color:var(--accent);color:var(--accent)}
+  button.primary{background:#14384f;border-color:#25678d;color:#bfe6ff}
+  button.primary:hover{background:#1a4a68}
+  input{background:#0d0f13;color:var(--fg);border:1px solid var(--line);
+        border-radius:6px;padding:6px 9px;font:inherit;min-width:110px}
+  input:focus{outline:none;border-color:var(--accent)}
+  .kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:12.5px}
+  .kv b{color:var(--dim);font-weight:500}
+  #items{display:grid;grid-template-columns:minmax(320px,44%) 1fr;gap:14px;min-height:420px}
+  #tree{overflow:auto;max-height:62vh;font-size:12.5px}
+  #props{overflow:auto;max-height:62vh}
+  ul.tree{list-style:none;margin:0;padding-left:14px}
+  ul.tree.root{padding-left:0}
+  li{margin:1px 0}
+  .node{display:flex;align-items:center;gap:6px;padding:2px 6px;border-radius:5px;cursor:pointer}
+  .node:hover{background:var(--panel2)}
+  .node.sel{background:#1d3a4d;outline:1px solid #2f6d94}
+  .caret{width:12px;color:var(--dim);flex:none;user-select:none;text-align:center}
+  .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tag{color:var(--dim);font-size:11px;flex:none}
+  .prop{border-top:1px solid var(--line);padding:9px 0}
+  .prop:first-child{border-top:0}
+  .prop .lbl{color:var(--dim);font-size:11.5px}
+  .prop .lbl code{color:var(--accent);font-size:11px}
+  .prop .val{margin-top:3px;display:flex;gap:6px;align-items:center}
+  .prop .val .ro{color:var(--fg);word-break:break-all;font-size:12.5px}
+  .feat{background:var(--panel2);border:1px solid var(--line);border-radius:6px;margin:6px 0;padding:8px 10px}
+  .feat h4{margin:0 0 6px;font-size:12px;color:var(--accent)}
+  #log{margin-top:8px;font-size:11.5px;color:var(--dim);max-height:90px;overflow:auto;white-space:pre-wrap}
+  .bad{color:var(--bad)} .ok{color:var(--accent2)} .warn{color:var(--warn)}
+  .hint{color:var(--dim);font-size:11.5px}
+  table.file{width:100%;border-collapse:collapse;font-size:12px}
+  table.file td{padding:3px 6px;border-bottom:1px solid var(--line)}
+  table.file td:last-child{text-align:right;color:var(--dim)}
+</style>
+</head>
+<body>
+
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>Probably Stolen · 存档 / 修改工具</h1>
+  <span class="hint" id="conn">未连接</span>
+  <span class="grow"></span>
+  <button onclick="refreshAll()">刷新</button>
+</header>
+
+<main>
+
+  <div class="card">
+    <h2>游戏状态</h2>
+    <div class="kv" id="statusKv"></div>
+    <div id="log"></div>
+  </div>
+
+  <div class="card">
+    <h2>金钱 / 好感度</h2>
+    <div class="row">
+      <span class="hint">现金</span>
+      <input id="cashIn" type="number" min="0" step="1">
+      <button class="primary" onclick="setCash()">应用现金</button>
+      <button onclick="addCash(1000000)">+100 万</button>
+      <button onclick="addCash(10000000)">+1000 万</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <span class="hint">野性好感 wildFavor</span>
+      <input id="favorIn" type="number" min="0" step="1">
+      <button onclick="setFavor()">应用好感度</button>
+    </div>
+    <p class="hint">改完记得点最下面的「让游戏保存存档」才会落盘。</p>
+  </div>
+
+  <div class="card">
+    <h2>物品（含容器内 · 层级树）</h2>
+    <div class="row" style="margin-bottom:10px">
+      <input id="filterIn" placeholder="筛选 identifier / 名字 / 容器名" style="min-width:260px">
+      <button onclick="renderTree()">筛选</button>
+      <button onclick="expandAll()">全部展开</button>
+      <button onclick="collapseAll()">全部折叠</button>
+      <span class="hint" id="treeMeta"></span>
+    </div>
+    <div id="items">
+      <div id="tree"></div>
+      <div id="props"><p class="hint">← 点左侧一件物品，这里显示它的全部属性（每项都带中文名和英文字段名）。</p></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>存档落盘（走游戏自己的 SaveManager）</h2>
+    <div class="row">
+      <button class="primary" onclick="doSave()">让游戏保存存档</button>
+      <button onclick="doLoad()">让游戏重新读档</button>
+      <button onclick="alert('改完记得：① 点「让游戏保存存档」② 再正常退出游戏，让 Steam 云端同步新档，否则云端旧档可能覆盖你的修改。')">注意事项</button>
+    </div>
+    <table class="file" id="files" style="margin-top:10px"></table>
+  </div>
+
+</main>
+
+<script>
+"use strict";
+
+/* ---------------------------------------------------------------- 字段名映射
+   每一项都是「中文名 + 英文字段名」，和游戏内属性窗口保持一致，不用猜。 */
+const ITEM_LABELS = {
+  identifier:        "物品ID",
+  name:              "名称",
+  unitCount:         "数量",
+  unitValue:         "价值",
+  unitBaseValue:     "基础价值",
+  lateUnitValue:     "后期价值",
+  backupUnitValue:   "备份价值",
+  shortDescription:  "短描述",
+  longDescription:   "长描述",
+  flavorText:        "风味文本",
+  customText:        "自定义文本",
+  spritePath:        "图标路径",
+  forceDisableActivate: "禁用激活",
+  forceDisableUse:   "禁用使用",
+  activateDefault:   "默认激活",
+  isCombatBackpack:  "战斗背包",
+  canUseOutsideCombat: "战斗外可用",
+  isDebugMenu:       "调试菜单物品",
+  useSpriteFromMod:  "使用MOD图标",
+  spriteChanged:     "图标已替换",
+  triggerOverwatch:  "触发警戒",
+};
+// 可编辑字段（字符串 / 数字 / 布尔都在这）
+const ITEM_EDITABLE = ["name","unitCount","unitValue","unitBaseValue",
+                       "lateUnitValue","backupUnitValue",
+                       "shortDescription","longDescription","flavorText","customText",
+                       "identifier","spritePath",
+                       "forceDisableActivate","forceDisableUse","activateDefault",
+                       "isCombatBackpack","canUseOutsideCombat","isDebugMenu",
+                       "useSpriteFromMod","spriteChanged","triggerOverwatch"];
+
+const FEAT_LABELS = {
+  index:                    "序号",
+  featureType:              "特征类型(枚举值)",
+  featureTypeName:          "特征类型名",
+  valueStage:               "价值档位",
+  valueModifier:            "价值修正",
+  preExposeValueModifier:   "暴露前修正",
+  publicDisplay:            "公开显示文本",
+  actualDisplay:            "真实显示文本",
+  identifier:               "特征标识",
+  category:                 "特征分类",
+  removedByTool:            "移除工具",
+  customIntValue1:          "自定义值1",
+  isFeatureExposed:         "是否已暴露",
+  isFeatureDiscovered:      "是否已发现",
+  isPublicHidden:           "是否对玩家隐藏",
+  isExposable:              "可暴露",
+  isDisabled:               "已禁用",
+  useCondition:             "使用条件",
+  usePreExposeValue:        "用暴露前价值",
+  initiallyShown:           "初始显示",
+  isFeatureMatch:           "特征匹配",
+};
+const FEAT_EDITABLE = ["valueModifier","preExposeValueModifier","customIntValue1",
+                       "publicDisplay","actualDisplay","removedByTool",
+                       "category","featureType","valueStage",
+                       "isFeatureExposed","isFeatureDiscovered","isPublicHidden",
+                       "isExposable","isDisabled","useCondition","usePreExposeValue",
+                       "initiallyShown","isFeatureMatch"];
+
+/* ------------------------------------------------------------------ 基础 */
+const $ = id => document.getElementById(id);
+let ITEMS = [];
+let SEL = null;
+const OPEN = new Set();     // 展开的容器 uniqueId
+
+function log(msg, cls){
+  const el = $("log");
+  const t = new Date().toLocaleTimeString();
+  const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = `[${t}] ${msg}`;
+  el.prepend(line);
+  while (el.childElementCount > 60) el.lastChild.remove();
+}
+
+async function api(path, body){
+  const opts = body
+    ? {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)}
+    : {};
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return await r.json();
+}
+
+/* -------------------------------------------------------------- 状态区 */
+async function refreshStatus(){
+  try{
+    const s = await api("/api/status");
+    $("dot").className = "dot" + (s.inGame ? " ok" : "");
+    $("conn").textContent = s.inGame ? "已在游戏中" : "已连接，但还没进游戏（未创建 PlayerStore）";
+
+    const box = $("statusKv");
+    box.textContent = "";
+    const add = (k, v) => {
+      const b = document.createElement("b"); b.textContent = k;
+      const s2 = document.createElement("span"); s2.textContent = String(v);
+      box.append(b, s2);
+    };
+    add("是否在游戏", s.inGame ? "是" : "否");
+    if (s.inGame){
+      add("现金 playerCash", s.cash);
+      add("野性好感 wildFavor", s.wildFavor);
+      add("存档槽 saveSlotId", s.slot);
+      add("devMode", s.devMode ? "开" : "关");
+      add("isProduction", s.isProduction ? "是（会锁调试）" : "否");
+      $("cashIn").value = s.cash;
+      $("favorIn").value = s.wildFavor;
+    }
+    add("游戏内有存档", s.hasSave ? "是" : "否");
+    add("界面目录", s.uiDir);
+  }catch(e){
+    $("dot").className = "dot";
+    $("conn").textContent = "连不上插件（游戏没开？）";
+    log("状态读取失败：" + e.message, "bad");
+  }
+}
+
+/* ------------------------------------------------------------ 金钱操作 */
+async function setCash(){
+  const v = parseInt($("cashIn").value, 10);
+  if (!Number.isFinite(v)) return log("现金必须是整数", "bad");
+  const r = await api("/api/money", {value:v});
+  if (r.ok){ log("现金已设为 " + r.cash, "ok"); refreshStatus(); } else log(r.error, "bad");
+}
+async function addCash(delta){
+  const cur = parseInt($("cashIn").value, 10) || 0;
+  $("cashIn").value = cur + delta;
+  await setCash();
+}
+async function setFavor(){
+  const v = parseInt($("favorIn").value, 10);
+  if (!Number.isFinite(v)) return log("好感度必须是整数", "bad");
+  const r = await api("/api/favor", {value:v});
+  if (r.ok){ log("好感度已设为 " + r.wildFavor, "ok"); refreshStatus(); } else log(r.error, "bad");
+}
+
+/* ---------------------------------------------------------------- 物品树 */
+async function loadTree(){
+  try{
+    const r = await api("/api/tree");
+    if (!r.ok) return log(r.error, "bad");
+    ITEMS = r.items || [];
+    renderTree();
+    log(`已加载 ${r.count} 件物品（含容器内）`, "ok");
+  }catch(e){ log("加载物品失败：" + e.message, "bad"); }
+}
+
+function filtered(){
+  const f = $("filterIn").value.trim().toLowerCase();
+  if (!f) return ITEMS;
+  return ITEMS.filter(it =>
+    (it.identifier||"").toLowerCase().includes(f) ||
+    (it.name||"").toLowerCase().includes(f) ||
+    (it.container||"").toLowerCase().includes(f));
+}
+
+function renderTree(){
+  const list = filtered();
+  const byParent = new Map();
+  const present = new Set(list.map(i => i.uniqueId));
+  for (const it of list){
+    const k = present.has(it.parentUid) ? it.parentUid : 0;   // 父项被筛掉时提到顶层
+    if (!byParent.has(k)) byParent.set(k, []);
+    byParent.get(k).push(it);
+  }
+
+  const host = $("tree");
+  host.textContent = "";
+  const root = document.createElement("ul");
+  root.className = "tree root";
+
+  const renderBranch = (parentUid, ul) => {
+    const kids = byParent.get(parentUid) || [];
+    for (const it of kids){
+      const li = document.createElement("li");
+
+      const node = document.createElement("div");
+      node.className = "node" + (SEL && SEL.uniqueId === it.uniqueId ? " sel" : "");
+
+      const caret = document.createElement("span");
+      caret.className = "caret";
+      const hasKids = (byParent.get(it.uniqueId) || []).length > 0;
+      caret.textContent = hasKids ? (OPEN.has(it.uniqueId) ? "▼" : "▶") : "·";
+      if (hasKids) caret.onclick = ev => {
+        ev.stopPropagation();
+        if (OPEN.has(it.uniqueId)) OPEN.delete(it.uniqueId); else OPEN.add(it.uniqueId);
+        renderTree();
+      };
+
+      const nm = document.createElement("span");
+      nm.className = "nm";
+      nm.textContent = `${it.identifier} | ${it.name || "（无名字）"}`;
+
+      const tg = document.createElement("span");
+      tg.className = "tag";
+      tg.textContent = `v=${it.unitValue} × ${it.unitCount}` + (hasKids ? `  (内含 ${it.childCount} 项)` : "");
+
+      node.append(caret, nm, tg);
+      node.onclick = () => { SEL = it; renderTree(); renderProps(); };
+      li.appendChild(node);
+
+      if (hasKids && OPEN.has(it.uniqueId)){
+        const sub = document.createElement("ul");
+        sub.className = "tree";
+        renderBranch(it.uniqueId, sub);
+        li.appendChild(sub);
+      }
+      ul.appendChild(li);
+    }
+  };
+
+  renderBranch(0, root);
+  host.appendChild(root);
+  $("treeMeta").textContent = `显示 ${list.length} / 共 ${ITEMS.length} 件`;
+}
+
+function expandAll(){ for (const it of ITEMS) if (it.childCount > 0) OPEN.add(it.uniqueId); renderTree(); }
+function collapseAll(){ OPEN.clear(); renderTree(); }
+
+/* ------------------------------------------------------------ 属性面板 */
+function propRow(host, label, field, value, editable, onApply){
+  const wrap = document.createElement("div");
+  wrap.className = "prop";
+
+  const lbl = document.createElement("div");
+  lbl.className = "lbl";
+  lbl.textContent = label + "  ";
+  const code = document.createElement("code");
+  code.textContent = "[" + field + "]";
+  lbl.appendChild(code);
+
+  const val = document.createElement("div");
+  val.className = "val";
+
+  if (editable){
+    let inp;
+    if (typeof value === "boolean"){
+      // 布尔字段用 true/false 下拉，避免手打出错
+      inp = document.createElement("select");
+      for (const opt of ["true", "false"]){
+        const o = document.createElement("option");
+        o.value = opt;
+        o.textContent = opt;
+        if (String(value) === opt) o.selected = true;
+        inp.appendChild(o);
+      }
+      inp.style.flex = "1";
+    } else {
+      inp = document.createElement("input");
+      inp.value = value === null || value === undefined ? "" : String(value);
+      inp.style.flex = "1";
+    }
+    const btn = document.createElement("button");
+    btn.textContent = "应用";
+    // 布尔字段原样传布尔值，其它传字符串——后端会严格区分
+    btn.onclick = () => onApply(field, typeof value === "boolean" ? (inp.value === "true") : inp.value);
+    val.append(inp, btn);
+  } else {
+    const ro = document.createElement("span");
+    ro.className = "ro";
+    ro.textContent = value === null || value === undefined ? "（null）" : String(value);
+    val.appendChild(ro);
+  }
+
+  wrap.append(lbl, val);
+  host.appendChild(wrap);
+}
+
+function renderProps(){
+  const host = $("props");
+  host.textContent = "";
+  if (!SEL){ host.innerHTML = '<p class="hint">← 点左侧一件物品。</p>'; return; }
+
+  const head = document.createElement("div");
+  head.className = "prop";
+  const h = document.createElement("div");
+  h.className = "lbl";
+  h.textContent = `选中：${SEL.container} / ${SEL.identifier}（uniqueId=${SEL.uniqueId}）`;
+  head.appendChild(h);
+  host.appendChild(head);
+
+  const g1 = document.createElement("div");
+  g1.className = "prop";
+  g1.innerHTML = '<div class="lbl">════ 基本属性（GameItem）════</div>';
+  host.appendChild(g1);
+
+  for (const f of Object.keys(ITEM_LABELS)){
+    if (!(f in SEL)) continue;
+    const editable = ITEM_EDITABLE.includes(f);
+    propRow(host, ITEM_LABELS[f], f, SEL[f], editable, async (field, v) => {
+      const body = {uniqueId: SEL.uniqueId};
+      const numFields = ["unitCount","unitValue","unitBaseValue","lateUnitValue","backupUnitValue"];
+      if (numFields.includes(field)){
+        const n = parseInt(v, 10);
+        if (!Number.isFinite(n)) return log(`${ITEM_LABELS[field]} 必须是整数`, "bad");
+        body[field] = n;
+      } else {
+        body[field] = v;
+      }
+      const r = await api("/api/item", body);
+      if (r.ok){ log(`已改 ${SEL.identifier} 的 ${ITEM_LABELS[field]}`, "ok"); loadTree(); }
+      else log(r.error, "bad");
+    });
+  }
+
+  // 特征
+  const g2 = document.createElement("div");
+  g2.className = "prop";
+  g2.innerHTML = `<div class="lbl">════ 特征 itemFeatures（${(SEL.features||[]).length} 条）════</div>`;
+  host.appendChild(g2);
+
+  (SEL.features || []).forEach(f => {
+    const box = document.createElement("div");
+    box.className = "feat";
+    const h4 = document.createElement("h4");
+    h4.textContent = `特征[${f.index}] ${f.featureTypeName}　valueModifier=${f.valueModifier}`;
+    box.appendChild(h4);
+    host.appendChild(box);
+
+    for (const k of Object.keys(FEAT_LABELS)){
+      if (k === "index") continue;
+      if (!(k in f)) continue;
+      const editable = FEAT_EDITABLE.includes(k);
+      propRow(box, "　" + FEAT_LABELS[k], k, f[k], editable, async (field, v) => {
+        const numFields = ["valueModifier","preExposeValueModifier"];
+        const body = {uniqueId: SEL.uniqueId, featureIndex: f.index};
+        body[field] = numFields.includes(field) ? parseInt(v, 10) : v;
+        const r = await api("/api/itemfeature", body);
+        if (r.ok){ log(`已改特征[${f.index}].${field}`, "ok"); loadTree(); }
+        else log(r.error, "bad");
+      });
+    }
+
+    const row = document.createElement("div");
+    row.className = "row";
+    const b1 = document.createElement("button");
+    b1.textContent = "这条特征：价值修正归零";
+    b1.onclick = async () => {
+      const r = await api("/api/itemzero", {uniqueId: SEL.uniqueId});
+      log(r.ok ? "已归零" : r.error, r.ok ? "ok" : "bad");
+      if (r.ok) loadTree();
+    };
+    row.appendChild(b1);
+    box.appendChild(row);
+  });
+
+  // 状态标签：耐久 / 电量 / 水量 / 容量 这类"物品特有数据"全都存在这里。
+  // 用可折叠的 JSON 树呈现：一行看摘要，点标签名才展开编辑，整个标签一个「应用」。
+  // 折叠状态挂在 window 上（renderProps 会重建面板，普通局部变量会丢）。
+  const OPEN_TAGS = window.__psOpenTags || (window.__psOpenTags = new Set());
+
+  const tagBlock = (title, arr, which) => {
+    if (!arr || !arr.length) return;
+    const g = document.createElement("div");
+    g.className = "prop";
+    g.innerHTML = `<div class="lbl">════ ${title}（${arr.length} 条，点标签名展开）════</div>`;
+    host.appendChild(g);
+
+    arr.forEach(t => {
+      const key = which + "." + t.tag;
+      const open = OPEN_TAGS.has(key);
+      const cn = t.localizedName || t.localized || "";
+
+      // 摘要行：只列非空的值，一眼看清这个标签到底存了什么
+      const sum = [];
+      if (t.int)    sum.push(`int=${t.int}`);
+      if (t.float)  sum.push(`float=${t.float}`);
+      if (t.long)   sum.push(`long=${t.long}`);
+      if (t.double && t.double !== "0") sum.push(`double=${t.double}`);
+      if (t.bool)   sum.push("bool=true");
+      if (t.string) sum.push(`string=${t.string}`);
+      if (!t.enabled) sum.push("已禁用");
+
+      const box = document.createElement("div");
+      box.className = "feat";
+
+      const head = document.createElement("h4");
+      head.style.cursor = "pointer";
+      head.textContent = `${open ? "▼" : "▶"} ${cn ? cn + " " : ""}[${t.tag}]` +
+                         "　" + (sum.length ? sum.join("　") : "（无值）");
+      head.onclick = () => {
+        if (OPEN_TAGS.has(key)) OPEN_TAGS.delete(key); else OPEN_TAGS.add(key);
+        renderProps();
+      };
+      box.appendChild(head);
+
+      if (open){
+        const rows = [];   // [label, field, type, input]
+        const mk = (label, field, type) => {
+          const row = document.createElement("div");
+          row.className = "val";
+
+          const name = document.createElement("span");
+          name.className = "ro";
+          name.style.minWidth = "86px";
+          name.textContent = label;
+
+          let inp;
+          if (type === "bool"){
+            inp = document.createElement("select");
+            for (const o of ["true", "false"]){
+              const op = document.createElement("option");
+              op.value = o;
+              op.textContent = o;
+              if (String(t[field]) === o) op.selected = true;
+              inp.appendChild(op);
+            }
+          } else {
+            inp = document.createElement("input");
+            inp.value = (t[field] === undefined || t[field] === null) ? "" : String(t[field]);
+          }
+          inp.style.flex = "1";
+          inp.style.minWidth = "0";
+
+          rows.push([label, field, type, inp]);
+          row.append(name, inp);
+          box.appendChild(row);
+        };
+
+        mk("整数 int",     "int",     "int");
+        mk("小数 float",   "float",   "float");
+        mk("整数 long",    "long",    "long");
+        mk("小数 double",  "double",  "double");
+        mk("开关 bool",    "bool",    "bool");
+        mk("启用 enabled", "enabled", "bool");
+        mk("文本 string",  "string",  "string");
+
+        const btnRow = document.createElement("div");
+        btnRow.className = "row";
+        btnRow.style.marginTop = "6px";
+
+        // 整个标签一个「应用」：一次性提交所有字段
+        const apply = document.createElement("button");
+        apply.textContent = "应用这个标签";
+        apply.onclick = async () => {
+          const body = {uniqueId: SEL.uniqueId, which, tag: t.tag};
+          for (const [label, field, type, inp] of rows){
+            const raw = String(inp.value);
+            if (type === "int" || type === "long"){
+              if (raw.trim() === "") continue;
+              const n = parseInt(raw, 10);
+              if (!Number.isFinite(n)) return log(`${label} 必须是整数`, "bad");
+              body[field] = n;
+            } else if (type === "float" || type === "double"){
+              if (raw.trim() === "") continue;
+              const n = parseFloat(raw);
+              if (!Number.isFinite(n)) return log(`${label} 必须是数字`, "bad");
+              body[field] = n;
+            } else if (type === "bool"){
+              body[field] = (raw.toLowerCase() === "true");
+            } else {
+              if (raw === "") continue;   // 空文本不提交，免得把原值清空
+              body[field] = raw;
+            }
+          }
+          const r = await api("/api/itemtag", body);
+          if (r.ok){ log(`已改 ${which}.${t.tag} → ${r.changed}`, "ok"); loadTree(); }
+          else log(r.error, "bad");
+        };
+
+        const close = document.createElement("button");
+        close.textContent = "收起";
+        close.onclick = () => { OPEN_TAGS.delete(key); renderProps(); };
+
+        btnRow.append(apply, close);
+        box.appendChild(btnRow);
+      }
+
+      host.appendChild(box);
+    });
+  };
+  tagBlock("状态标签 state（物品原始数据）", SEL.state, "state");
+  tagBlock("修改后状态 modifiedState", SEL.modifiedState, "modifiedState");
+
+  const bulk = document.createElement("div");
+  bulk.className = "row";
+  bulk.style.marginTop = "10px";
+  const b2 = document.createElement("button");
+  b2.textContent = "该物品：全部特征标记为已发现/不隐藏";
+  b2.onclick = async () => {
+    const r = await api("/api/itemdisc", {uniqueId: SEL.uniqueId});
+    log(r.ok ? "已标记" : r.error, r.ok ? "ok" : "bad");
+    if (r.ok) loadTree();
+  };
+  const b3 = document.createElement("button");
+  b3.textContent = "全部物品：价值拉满（含容器内）";
+  b3.onclick = async () => {
+    const r = await api("/api/boost", {});
+    log(r.ok ? "已拉满全部物品价值" : r.error, r.ok ? "ok" : "bad");
+    if (r.ok) loadTree();
+  };
+  bulk.append(b2, b3);
+  host.appendChild(bulk);
+}
+
+/* ------------------------------------------------------------ 存读档 */
+async function doSave(){
+  const r = await api("/api/save", {});
+  if (r.ok){ log("游戏已写档：" + r.message, "ok"); refreshFiles(); }
+  else log(r.error, "bad");
+}
+async function doLoad(){
+  if (!confirm("重新读档会用磁盘上的存档覆盖当前内存状态，未保存的修改会丢。确定？")) return;
+  const r = await api("/api/load", {});
+  if (r.ok){ log("游戏已读档：" + r.message, "ok"); refreshAll(); }
+  else log(r.error, "bad");
+}
+
+async function refreshFiles(){
+  try{
+    const r = await api("/api/savefile");
+    const t = $("files");
+    t.textContent = "";
+    if (!r.ok) return log(r.error, "bad");
+    for (const f of r.files){
+      const tr = document.createElement("tr");
+      const a = document.createElement("td");
+      a.textContent = f.name;
+      const b = document.createElement("td");
+      b.textContent = f.exists ? `${f.modified} · ${(f.length/1024).toFixed(1)} KB` : "（不存在）";
+      tr.append(a, b);
+      t.appendChild(tr);
+    }
+    const tr = document.createElement("tr");
+    const a = document.createElement("td"); a.textContent = "目录";
+    const b = document.createElement("td"); b.textContent = r.dir;
+    tr.append(a, b); t.appendChild(tr);
+  }catch(e){ log("读存档信息失败：" + e.message, "bad"); }
+}
+
+/* ------------------------------------------------------------ 启动 */
+async function refreshAll(){
+  await refreshStatus();
+  await loadTree();
+  await refreshFiles();
+}
+/* ------------------------------------------------ 接游戏内 F10 推来的焦点物品 */
+async function pollFocus(){
+  try{
+    const r = await api("/api/focus");
+    if (r && r.ok && r.uniqueId) focusItem(r.uniqueId);
+  }catch(e){ /* 游戏没开就静默忽略 */ }
+}
+
+async function focusItem(uid, retried){
+  let byId = new Map(ITEMS.map(i => [i.uniqueId, i]));
+  let hit = byId.get(uid);
+
+  if (!hit && !retried){
+    // 列表可能过期（刚买到 / 刚移动 / 刚开箱的物品），先重新拉一次再试
+    log(`列表里暂时没有 uniqueId=${uid}，正在刷新物品列表再试一次…`, "warn");
+    await loadTree();
+    return focusItem(uid, true);
+  }
+
+  if (!hit){
+    // 树里确实没有：走 /api/find 单件查询（插件侧会直接看「当前右键物品」，不依赖遍历）
+    log(`树里没有 uniqueId=${uid}，改用单件查询…`, "warn");
+    try{
+      const r = await api("/api/find?uid=" + encodeURIComponent(uid));
+      if (r && r.ok && r.item){
+        hit = r.item;
+        $("filterIn").value = "";
+        SEL = hit;
+        renderTree();
+        renderProps();
+        log(`已用单件查询打开 ${hit.identifier} | ${hit.name || "（无名字）"}（不在库存树里）`, "ok");
+        return;
+      }
+      log(`单件查询也失败了：${(r && r.error) || "未知错误"}。` +
+          `说明这件物品只存在于「当前右键目标」之外的地方——请在游戏里重新右键它再按 F10。`, "bad");
+      return;
+    }catch(e){
+      log("单件查询请求失败：" + e.message, "bad");
+      return;
+    }
+  }
+
+  $("filterIn").value = "";                 // 清掉筛选，保证它可见
+
+  let cur = hit, guard = 0;                 // 展开它的所有祖先容器
+  while (cur && cur.parentUid && byId.has(cur.parentUid) && guard++ < 16){
+    OPEN.add(cur.parentUid);
+    cur = byId.get(cur.parentUid);
+  }
+
+  SEL = hit;
+  renderTree();
+  renderProps();
+
+  requestAnimationFrame(() => {             // 滚到它所在的行
+    const el = document.querySelector(".node.sel");
+    if (el) el.scrollIntoView({block:"center", behavior:"smooth"});
+  });
+  log(`已定位到 ${hit.identifier} | ${hit.name || "（无名字）"}（来自游戏内 F10）`, "ok");
+}
+
+refreshAll();
+setInterval(refreshStatus, 5000);   // 只轮询轻量的状态，不刷整棵树
+setInterval(pollFocus, 1200);       // 接游戏内 F10 推过来的焦点物品
+</script>
+</body>
+</html>
