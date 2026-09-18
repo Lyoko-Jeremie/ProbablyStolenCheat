@@ -29,6 +29,7 @@ public class CheatBehaviour : MonoBehaviour
 
         if (Input.GetKeyDown(KeyCode.F9)) TogglePanel();                   // 修改器面板
         if (Input.GetKeyDown(KeyCode.F5)) ModCash(1_000_000);              // 加 100 万
+        if (Input.GetKeyDown(KeyCode.F8)) ToggleSpawnMenu();               // 开关游戏自带的物品生成菜单
         if (Input.GetKeyDown(KeyCode.F10)) ItemEditor.PushContextItem();   // 把右键物品推给外部 UI
         if (_infiniteMoney) LockCash();
     }
@@ -112,12 +113,17 @@ public class CheatBehaviour : MonoBehaviour
         Log?.LogInfo($"devMode = {on}（isProduction 已置 false）");
     }
 
-    internal void OpenSpawnMenu()
+    /// <summary>
+    /// 开关游戏自带的物品生成菜单（热键 F8，以及面板里的按钮）。
+    /// 游戏只暴露了 ToggleSpawnMenu()，没有查询当前状态的接口，所以是无状态盲切换：
+    /// 菜单开着时按就关，关着时按就开。
+    /// </summary>
+    internal void ToggleSpawnMenu()
     {
         var dh = DebugHandler.current;
-        if (dh == null) { Log?.LogWarning("DebugHandler.current 为 null"); return; }
+        if (dh == null) { Log?.LogWarning("DebugHandler.current 为 null（还没进入商店场景）"); return; }
         dh.ToggleSpawnMenu();
-        Log?.LogInfo("已请求打开游戏自带的物品生成菜单");
+        Log?.LogInfo("已切换游戏自带的物品生成菜单（F8）");
     }
 
     // -------------------------------------------------------------- 存读档
@@ -200,9 +206,9 @@ public class CheatBehaviour : MonoBehaviour
 
         b.AddLabel("── 调试 ──", "lbl_debug");
         b.AddToggle("devMode", GetDevMode(), Act<bool>(SetDevMode), "tgl_dev");
-        b.AddButton("打开物品生成菜单", Act(OpenSpawnMenu), "btn_spawn");
+        b.AddButton("打开 / 关闭物品生成菜单（F8）", Act(ToggleSpawnMenu), "btn_spawn");
 
-        b.AddLabel("热键：F9 面板 / F5 加钱 / F10 外部 UI 打开右键物品", "lbl_hint");
+        b.AddLabel("热键：F9 面板 / F5 加钱 / F8 物品生成菜单 / F10 外部 UI 打开右键物品", "lbl_hint");
         b.AddLabel("外部 UI（物品属性在这里看）：http://127.0.0.1:8787/", "lbl_ui");
 
         _window = b.Show();

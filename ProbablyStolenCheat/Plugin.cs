@@ -36,7 +36,7 @@ public class Plugin : BasePlugin
         SaveServer.Start();
 
         Log.LogInfo($"{PluginName} v{PluginVersion} 已加载");
-        Log.LogInfo("热键：F9 = 修改器面板，F5 = 加 100 万，F10 = 编辑右键指向的物品");
+        Log.LogInfo("热键：F9 = 修改器面板，F5 = 加 100 万，F8 = 开关物品生成菜单，F10 = 编辑右键指向的物品");
         Log.LogInfo("外部 UI：http://127.0.0.1:8787/  （界面文件：" + UiDir + "）");
     }
 }

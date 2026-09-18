@@ -50,5 +50,5 @@ if (Test-Path $srcUi) {
     Write-Host "UI folder not found, skipped: $srcUi" -ForegroundColor DarkGray
 }
 
-Write-Host 'In game: F9 = cheat panel, F5 = +1,000,000, F10 = edit right-clicked item' -ForegroundColor Green
+Write-Host 'In game: F9 = cheat panel, F5 = +1,000,000, F8 = item spawn menu, F10 = edit right-clicked item' -ForegroundColor Green
 Write-Host 'External UI: http://127.0.0.1:8787/' -ForegroundColor Green
